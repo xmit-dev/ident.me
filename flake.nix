@@ -28,6 +28,7 @@
             packages = with pkgs; [
               bun
               bundler
+              dart-sass
               nixfmt
               gnumake
               go

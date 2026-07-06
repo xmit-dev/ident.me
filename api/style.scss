@@ -1,7 +1,9 @@
+@use "sass:color";
+
 $imp: #009;
 $fg: #333;
 $bg: #fff;
-$light: mix($fg, $bg, 80%);
+$light: color.mix($fg, $bg, 80%);
 
 html, div, li, pre {
   margin: 0;
