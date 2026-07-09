@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -155,6 +157,63 @@ type RDAPHTTP struct {
 	Body   interface{} `json:"body"`
 }
 
+// exportCache wraps an autocert.Cache so that, whenever a certificate for one
+// of the given hosts is stored, the certificate chain and private key are also
+// written to dir as separate PEM files (<host>.crt and <host>.key). This is the
+// layout OpenSMTPD's "pki <name> cert/key" directives expect.
+type exportCache struct {
+	autocert.Cache
+	dir   string
+	hosts map[string]bool
+}
+
+func (c exportCache) Put(ctx context.Context, key string, data []byte) error {
+	if err := c.Cache.Put(ctx, key, data); err != nil {
+		return err
+	}
+	// autocert stores certificates under the host name, optionally with a
+	// "+rsa" suffix; other entries (tokens, account key) carry a "+" too.
+	host := key
+	if i := strings.IndexByte(host, '+'); i >= 0 {
+		host = host[:i]
+	}
+	if !c.hosts[host] {
+		return nil
+	}
+	// autocert bundles the private key PEM block(s) followed by the
+	// certificate chain. Split them back apart for OpenSMTPD.
+	var certPEM, keyPEM []byte
+	for rest := data; len(rest) > 0; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if strings.HasSuffix(block.Type, "PRIVATE KEY") {
+			keyPEM = append(keyPEM, pem.EncodeToMemory(block)...)
+		} else {
+			certPEM = append(certPEM, pem.EncodeToMemory(block)...)
+		}
+	}
+	if len(certPEM) == 0 || len(keyPEM) == 0 {
+		fmt.Printf("Error exporting certificate for %s: could not split cert/key\n", host)
+		return nil
+	}
+	certPath := filepath.Join(c.dir, host+".crt")
+	keyPath := filepath.Join(c.dir, host+".key")
+	// OpenSMTPD refuses key files readable by group/other.
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		fmt.Printf("Error exporting key for %s: %v\n", host, err)
+		return nil
+	}
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		fmt.Printf("Error exporting certificate for %s: %v\n", host, err)
+		return nil
+	}
+	fmt.Printf("Exported certificate for %s to %s and %s\n", host, certPath, keyPath)
+	return nil
+}
+
 func main() {
 	bg := context.Background()
 	tracker := metrics.NewTracker(nil)
@@ -169,10 +228,19 @@ func main() {
 
 	proxies, proxyHosts := parseProxies(os.Getenv("IDENTHTTP_PROXY"))
 
+	var cache autocert.Cache = autocert.DirCache("/certs")
+	if len(proxyHosts) > 0 {
+		hosts := make(map[string]bool, len(proxyHosts))
+		for _, h := range proxyHosts {
+			hosts[h] = true
+		}
+		cache = exportCache{Cache: cache, dir: "/certs", hosts: hosts}
+	}
+
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
 		HostPolicy: autocert.HostWhitelist(append(append([]string{}, domains...), proxyHosts...)...),
-		Cache:      autocert.DirCache("/certs"),
+		Cache:      cache,
 	}
 
 	router := http.NewServeMux()
