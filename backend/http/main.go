@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/netip"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -103,6 +106,35 @@ var (
 	}
 )
 
+// parseProxies parses a proxy specification of the form
+// "host=backend,host=backend", e.g. "cc.me=127.0.0.1:9999". It returns a map
+// from hostname to reverse proxy and the ordered list of hostnames.
+func parseProxies(spec string) (map[string]*httputil.ReverseProxy, []string) {
+	proxies := map[string]*httputil.ReverseProxy{}
+	var hosts []string
+	for _, pair := range strings.Split(spec, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		host, backend, ok := strings.Cut(pair, "=")
+		if !ok {
+			fmt.Printf("Ignoring malformed proxy entry %q\n", pair)
+			continue
+		}
+		host = strings.TrimSpace(host)
+		backend = strings.TrimSpace(backend)
+		if host == "" || backend == "" {
+			fmt.Printf("Ignoring malformed proxy entry %q\n", pair)
+			continue
+		}
+		proxies[host] = httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: backend})
+		hosts = append(hosts, host)
+		fmt.Printf("Proxying %s to %s\n", host, backend)
+	}
+	return proxies, hosts
+}
+
 func ip(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -134,9 +166,12 @@ func main() {
 		panic(err)
 	}
 	defer db.Close()
+
+	proxies, proxyHosts := parseProxies(os.Getenv("IDENTHTTP_PROXY"))
+
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
-		HostPolicy: autocert.HostWhitelist(domains...),
+		HostPolicy: autocert.HostWhitelist(append(append([]string{}, domains...), proxyHosts...)...),
 		Cache:      autocert.DirCache("/certs"),
 	}
 
@@ -345,8 +380,24 @@ func main() {
 		w.Write(bytes)
 	})
 
+	// Dispatch proxied hosts to their backends; everything else hits the mux.
+	handler := http.Handler(router)
+	if len(proxies) > 0 {
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := r.Host
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			if p, ok := proxies[host]; ok {
+				p.ServeHTTP(w, r)
+				return
+			}
+			router.ServeHTTP(w, r)
+		})
+	}
+
 	serverTLS := &http.Server{
-		Handler:      router,
+		Handler:      handler,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  65 * time.Second,
@@ -355,7 +406,7 @@ func main() {
 	go func() {
 		server3 := &http3.Server{
 			Addr:    ":443",
-			Handler: router,
+			Handler: handler,
 			TLSConfig: &tls.Config{
 				GetCertificate: certManager.GetCertificate,
 			},
@@ -369,7 +420,7 @@ func main() {
 	go func() {
 		server80 := &http.Server{
 			Addr:         ":80",
-			Handler:      certManager.HTTPHandler(router),
+			Handler:      certManager.HTTPHandler(handler),
 			ReadTimeout:  5 * time.Second,
 			WriteTimeout: 10 * time.Second,
 			IdleTimeout:  65 * time.Second,
