@@ -19,9 +19,9 @@ import (
 
 	"github.com/openrdap/rdap"
 	"github.com/oschwald/maxminddb-golang/v2"
-	"github.com/xmit-co/ident.me/backend/internal/metrics"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/redis/go-redis/v9"
+	"github.com/xmit-co/ident.me/backend/internal/metrics"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -465,9 +465,11 @@ func main() {
 	}
 
 	serverTLS := &http.Server{
-		Handler:      handler,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		Handler:     handler,
+		ReadTimeout: 5 * time.Second,
+		// Long enough for proxied endpoints that render before responding
+		// (cc.me /shot); idle and read timeouts still bound slow clients.
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  65 * time.Second,
 	}
 
@@ -490,7 +492,7 @@ func main() {
 			Addr:         ":80",
 			Handler:      certManager.HTTPHandler(handler),
 			ReadTimeout:  5 * time.Second,
-			WriteTimeout: 10 * time.Second,
+			WriteTimeout: 120 * time.Second,
 			IdleTimeout:  65 * time.Second,
 		}
 
