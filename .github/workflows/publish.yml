@@ -11,36 +11,36 @@ jobs:
   win-x86:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - run: |
           cmake -A win32 .
           cmake --build . --config MinSizeRel
         working-directory: cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: identme.x86.exe
           path: cli/MinSizeRel/identme.exe
   win-x64:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - run: |
           cmake -A x64 .
           cmake --build . --config MinSizeRel
         working-directory: cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: identme.x64.exe
           path: cli/MinSizeRel/identme.exe
   win-arm64:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - run: |
           cmake -A ARM64 .
           cmake --build . --config MinSizeRel
         working-directory: cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: identme.arm64.exe
           path: cli/MinSizeRel/identme.exe
@@ -57,7 +57,7 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: identme.x86.exe
           path: .
@@ -69,7 +69,7 @@ jobs:
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: identme.x64.exe
           path: .
@@ -81,7 +81,7 @@ jobs:
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: identme.arm64.exe
           path: .
